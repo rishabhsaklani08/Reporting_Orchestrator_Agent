@@ -22,7 +22,10 @@ import sys
 from runner import run_config, StepError
 from utils import popup, clean_input, get_user_dir
 
-LOGIN_URL = "https://wd2-impl-identity.workday.com/wday/authgwy/accenture_dpt3/upc/login"
+LOGIN_URL = os.environ.get(
+    "WD_TENANT_LOGIN_URL",
+    "https://wd2-impl-identity.workday.com/wday/authgwy/accenture_dpt3/upc/login",
+)
 # Where Excel files will be saved
 DOWNLOADS_DIR = os.path.join(get_user_dir(), "exported_reports")
 

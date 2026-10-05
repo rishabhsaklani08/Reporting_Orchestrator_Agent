@@ -100,8 +100,8 @@ app = FastAPI(title="Report Discovery Agent API", lifespan=lifespan)
 
 class SearchRequest(BaseModel):
     query: str
-    bm25_top_n: int = 50
-    llm_top_k: int = 20
+    bm25_top_n: int = 15
+    llm_top_k: int = 5
     use_llm: bool = True
 
 

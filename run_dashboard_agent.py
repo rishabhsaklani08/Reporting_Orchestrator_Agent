@@ -22,6 +22,7 @@ from utils import popup, clean_input, get_user_dir
 # Reuse shared helpers from the report migration agent
 from run_agent import (
     LOGIN_URL,
+    CC_LOGIN_URL,
     _row_checkbox_selector,
     _report_steps,          # works for dashboards too — same grid pattern
     _customer_central_steps,
@@ -87,11 +88,15 @@ def build_config(industry: str, dashboards: list[str]) -> dict:
         {"action": "wait", "seconds": 2},
 
         # --- search + open the Create Configuration Package task ---
+        {"action": "click", "selector": "[data-automation-id='globalSearchInput']", "timeout": 10000, "label": "focus search bar"},
+        {"action": "press", "selector": "[data-automation-id='globalSearchInput']", "key": "Control+A", "label": "select all in search bar"},
         {"action": "type", "selector": "[data-automation-id='globalSearchInput']", "text": "Create Configuration Package", "label": "search task"},
         {"action": "press", "selector": "[data-automation-id='globalSearchInput']", "key": "Enter", "label": "submit search"},
-        {"action": "wait_for", "selector": "text=Create Configuration Package", "state": "visible", "timeout": 30000, "label": "wait for results"},
+        {"action": "wait_for", "selector": "text='Tasks and Reports'", "state": "visible", "timeout": 30000, "label": "wait for Tasks and Reports tab"},
         {"action": "wait", "seconds": 2},
-        {"action": "click", "text": "Create Configuration Package", "exact": True, "timeout": 20000, "label": "open the task"},
+        {"action": "click", "text": "Tasks and Reports", "exact": False, "timeout": 20000, "label": "click Tasks and Reports tab"},
+        {"action": "wait", "seconds": 3},
+        {"action": "click", "byRole": {"role": "link", "name": "Create Configuration Package", "exact": True}, "timeout": 20000, "label": "open the task"},
 
         # --- name + implementation type (DASHBOARD-SPECIFIC) ---
         {"action": "wait_for", "selector": "[data-automation-id='textInputBox']", "state": "visible", "timeout": 30000, "label": "wait for form"},
@@ -130,7 +135,7 @@ def build_config(industry: str, dashboards: list[str]) -> dict:
         {"action": "click", "selector": "button[data-automation-id='wd-CommandButton_uic_okButton']", "optional": True, "timeout": 8000, "label": "acknowledge migrate message if shown"},
         {"action": "wait", "seconds": 3},
         # Navigate directly to Customer Central
-        {"action": "navigate", "url": "https://impl.workday.com/wday/authgwy/accenture_ptcc/login.htmld", "wait_until": "domcontentloaded", "timeout": 90000, "label": "open Customer Central login"},
+        {"action": "navigate", "url": CC_LOGIN_URL, "wait_until": "domcontentloaded", "timeout": 90000, "label": "open Customer Central login"},
     ]
 
     # Customer Central block: create the configuration extract and download it

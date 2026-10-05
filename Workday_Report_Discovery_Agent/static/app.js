@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const requestBody = {
             query: query,
-            bm25_top_n: 50, // Fixed size to retrieve the best candidate pool for the LLM
+            bm25_top_n: 15, // Reduced to stay within model token limits
             llm_top_k: parseInt(llmSlider.value),
             use_llm: true
         };

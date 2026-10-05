@@ -56,13 +56,13 @@ def _resolve_locator(page: Page, step: dict[str, Any], allow_text: bool = True):
     """
     exact = step.get("exact", False)
     if "byRole" in step:
-        # {"role": "button", "name": "Filter", "exact": true} — get_by_role ignores hidden
+        # {"role": "button", "name": "Filter", "exact": True} — get_by_role ignores hidden
         # elements (a11y tree), which conveniently skips stale/hidden popups.
         spec = step["byRole"]
         kwargs: dict[str, Any] = {}
         if spec.get("name") is not None:
             kwargs["name"] = spec["name"]
-            kwargs["exact"] = spec.get("exact", False)
+            kwargs["exact"] = spec.get("exact", exact)
         loc = page.get_by_role(spec["role"], **kwargs)
         desc = f"role={spec['role']!r} name={spec.get('name')!r}"
     elif "byLabel" in step:
@@ -76,7 +76,7 @@ def _resolve_locator(page: Page, step: dict[str, Any], allow_text: bool = True):
     elif "selector" in step:
         loc, desc = page.locator(step["selector"]), step["selector"]
     else:
-        raise StepError("step needs one of: selector, byLabel, automation_label, text")
+        raise StepError("step needs one of: selector, byLabel, automation_label, text, byRole")
     if "nth" in step:
         return loc.nth(step["nth"]), f"{desc}[nth={step['nth']}]"
     return loc.first, desc
@@ -174,16 +174,24 @@ def _step_type(page: Page, step: dict[str, Any]) -> str:
 
 def _step_press(page: Page, step: dict[str, Any]) -> str:
     key = step["key"]  # e.g. "Enter", "Escape", "Control+A"
-    selector = step.get("selector")
-    if selector:
-        page.press(selector, key, timeout=step.get("timeout", 10000))
-        return f"pressed {key} on {selector}"
+    has_target = any(k in step for k in ("byRole", "byLabel", "automation_label", "selector"))
+    if has_target:
+        loc, desc = _resolve_locator(page, step, allow_text=False)
+        loc.press(key, timeout=step.get("timeout", 10000))
+        return f"pressed {key} on {desc}"
     page.keyboard.press(key)
     return f"pressed {key}"
 
 
 def _step_wait_for(page: Page, step: dict[str, Any]) -> str:
-    selector = step["selector"]
+    selector = step.get("selector")
+    if not selector:
+        if "text" in step:
+            selector = f"text={step['text']}"
+        elif "byLabel" in step:
+            selector = f"text={step['byLabel']}"
+        else:
+            raise StepError("wait_for needs 'selector' or 'text'")
     state = step.get("state", "visible")  # attached | detached | visible | hidden
     page.wait_for_selector(selector, state=state, timeout=step.get("timeout", 10000))
     return f"waited for {selector} ({state})"
@@ -268,26 +276,133 @@ def _step_pause(page: Page, step: dict[str, Any]) -> str:
 
 
 def _step_download(page: Page, step: dict[str, Any]) -> str:
-    """Click a target and capture the file download it triggers, saving it to disk.
+    """Click a target and capture the file download it triggers, saving it to disk."""
+    import glob
+    import shutil
 
-    Targeting is the same as 'click' (selector / byLabel / text / nth). 'path' sets the
-    save location; if omitted, the browser's suggested filename is used. 'timeout' bounds
-    how long to wait for the download to start (default 30s).
-    """
     loc, desc = _resolve_locator(page, step)
-    timeout = step.get("timeout", 30000)
-    with page.expect_download(timeout=timeout) as dl_info:
-        loc.click(timeout=timeout)
-    download = dl_info.value
-    filename = step.get("path") or download.suggested_filename
+    timeout = step.get("timeout", 60000)
+    context = page.context
+
+    filename = step.get("path")
     download_dir = step.get("download_dir")
     if download_dir:
         os.makedirs(download_dir, exist_ok=True)
-        path = os.path.join(download_dir, os.path.basename(filename))
+        target_path = os.path.join(download_dir, os.path.basename(filename)) if filename else None
     else:
-        path = filename
-    download.save_as(path)
-    return f"downloaded {download.suggested_filename!r} from {desc} -> {path}"
+        target_path = filename
+
+    if target_path:
+        os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
+
+    download_obj = []
+
+    def _on_dl(dl):
+        download_obj.append(dl)
+
+    context.on("download", _on_dl)
+    page.on("download", _on_dl)
+    def _on_new_page(p):
+        p.on("download", _on_dl)
+    context.on("page", _on_new_page)
+
+    try:
+        try:
+            loc.click(timeout=min(timeout, 20000), force=True)
+        except Exception:
+            try:
+                loc.click(timeout=min(timeout, 10000))
+            except Exception:
+                pass
+
+        start_t = time.time()
+        while not download_obj and (time.time() - start_t) < (min(timeout, 30000) / 1000.0):
+            time.sleep(0.5)
+
+        if download_obj:
+            download = download_obj[0]
+            final_path = target_path or (
+                os.path.join(download_dir, download.suggested_filename) if download_dir else download.suggested_filename
+            )
+            try:
+                download.save_as(final_path)
+            except Exception:
+                temp_path = download.path()
+                if temp_path and os.path.exists(temp_path):
+                    shutil.copy2(temp_path, final_path)
+            return f"downloaded {download.suggested_filename!r} from {desc} -> {final_path}"
+
+        # FALLBACK: Check download locations for recently completed download
+        downloads_folders = [
+            download_dir,
+            os.path.expanduser("~/Downloads"),
+            os.path.dirname(os.path.abspath(target_path)) if target_path else None,
+        ]
+        recent_cutoff = time.time() - 120
+        found_file = None
+        for folder in downloads_folders:
+            if not folder or not os.path.isdir(folder):
+                continue
+            candidates = glob.glob(os.path.join(folder, "*"))
+            for cand in candidates:
+                if cand.endswith(".crdownload") or cand.endswith(".tmp"):
+                    continue
+                try:
+                    if os.path.getmtime(cand) >= recent_cutoff:
+                        target_ext = os.path.splitext(target_path)[1].lower() if target_path else ""
+                        cand_ext = os.path.splitext(cand)[1].lower()
+                        if target_ext and cand_ext == target_ext:
+                            found_file = cand
+                            break
+                        elif not target_ext:
+                            found_file = cand
+                            break
+                except Exception:
+                    pass
+            if found_file:
+                break
+
+        if found_file:
+            final_path = target_path or found_file
+            if os.path.abspath(found_file) != os.path.abspath(final_path):
+                shutil.copy2(found_file, final_path)
+            return f"download detected ({os.path.basename(found_file)}) from {desc} -> {final_path}"
+
+        raise StepError(f"download from {desc} timed out after {timeout/1000}s")
+    finally:
+        try:
+            context.remove_listener("download", _on_dl)
+        except Exception:
+            pass
+        try:
+            page.remove_listener("download", _on_dl)
+        except Exception:
+            pass
+        try:
+            context.remove_listener("page", _on_new_page)
+        except Exception:
+            pass
+
+
+
+def _step_upload(page: Page, step: dict[str, Any]) -> str:
+    """Click a trigger element and handle the native file dialog via Playwright's file_chooser event.
+
+    Step schema:
+        {"action": "upload", "selector": "...", "file_path": "/path/to/file", ...}
+    """
+    loc, desc = _resolve_locator(page, step)
+    file_path = step.get("file_path", "")
+    timeout = step.get("timeout", 30000)
+
+    if not file_path or not os.path.isfile(file_path):
+        raise StepError(f"upload file not found: {file_path!r}")
+
+    with page.expect_file_chooser(timeout=timeout) as fc_info:
+        loc.click(timeout=min(timeout, 15000))
+    file_chooser = fc_info.value
+    file_chooser.set_files(file_path)
+    return f"uploaded {os.path.basename(file_path)!r} via {desc}"
 
 
 STEP_HANDLERS = {
@@ -304,6 +419,7 @@ STEP_HANDLERS = {
     "dump": _step_dump,
     "pause": _step_pause,
     "download": _step_download,
+    "upload": _step_upload,
 }
 
 
@@ -475,7 +591,7 @@ def _async_resolve_locator(page: "AsyncPage", step: dict[str, Any], allow_text: 
         kwargs: dict[str, Any] = {}
         if spec.get("name") is not None:
             kwargs["name"] = spec["name"]
-            kwargs["exact"] = spec.get("exact", False)
+            kwargs["exact"] = spec.get("exact", exact)
         loc = page.get_by_role(spec["role"], **kwargs)
         desc = f"role={spec['role']!r} name={spec.get('name')!r}"
     elif "byLabel" in step:
@@ -492,7 +608,7 @@ def _async_resolve_locator(page: "AsyncPage", step: dict[str, Any], allow_text: 
         loc = page.locator(step["selector"])
         desc = step["selector"]
     else:
-        raise StepError("step needs one of: selector, byLabel, automation_label, text")
+        raise StepError("step needs one of: selector, byLabel, automation_label, text, byRole")
     if "nth" in step:
         return loc.nth(step["nth"]), f"{desc}[nth={step['nth']}]"
     return loc.first, desc
@@ -578,16 +694,24 @@ async def _async_step_type(page, step):
 
 async def _async_step_press(page, step):
     key = step["key"]
-    selector = step.get("selector")
-    if selector:
-        await page.press(selector, key, timeout=step.get("timeout", 10000))
-        return f"pressed {key} on {selector}"
+    has_target = any(k in step for k in ("byRole", "byLabel", "automation_label", "selector"))
+    if has_target:
+        loc, desc = _async_resolve_locator(page, step, allow_text=False)
+        await loc.press(key, timeout=step.get("timeout", 10000))
+        return f"pressed {key} on {desc}"
     await page.keyboard.press(key)
     return f"pressed {key}"
 
 
 async def _async_step_wait_for(page, step):
-    selector = step["selector"]
+    selector = step.get("selector")
+    if not selector:
+        if "text" in step:
+            selector = f"text={step['text']}"
+        elif "byLabel" in step:
+            selector = f"text={step['byLabel']}"
+        else:
+            raise StepError("wait_for needs 'selector' or 'text'")
     state = step.get("state", "visible")
     await page.wait_for_selector(selector, state=state, timeout=step.get("timeout", 10000))
     return f"waited for {selector} ({state})"
@@ -685,20 +809,130 @@ async def _async_step_pause(_page, step):
 
 
 async def _async_step_download(page, step):
+    import glob
+    import shutil
+
     loc, desc = _async_resolve_locator(page, step)
-    timeout = step.get("timeout", 30000)
-    async with page.expect_download(timeout=timeout) as dl_info:
-        await loc.click(timeout=timeout)
-    download = await dl_info.value
-    filename = step.get("path") or download.suggested_filename
+    timeout = step.get("timeout", 60000)
+    context = page.context
+
+    filename = step.get("path")
     download_dir = step.get("download_dir")
     if download_dir:
         os.makedirs(download_dir, exist_ok=True)
-        path = os.path.join(download_dir, os.path.basename(filename))
+        target_path = os.path.join(download_dir, os.path.basename(filename)) if filename else None
     else:
-        path = filename
-    await download.save_as(path)
-    return f"downloaded {download.suggested_filename!r} from {desc} -> {path}"
+        target_path = filename
+
+    if target_path:
+        os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
+
+    download_future = asyncio.get_running_loop().create_future()
+
+    def _on_dl(dl):
+        if not download_future.done():
+            download_future.set_result(dl)
+
+    context.on("download", _on_dl)
+    page.on("download", _on_dl)
+    def _on_new_page(p):
+        p.on("download", _on_dl)
+    context.on("page", _on_new_page)
+
+    download = None
+    try:
+        try:
+            await loc.click(timeout=min(timeout, 20000), force=True)
+        except Exception:
+            try:
+                await loc.click(timeout=min(timeout, 10000))
+            except Exception:
+                pass
+
+        try:
+            download = await asyncio.wait_for(download_future, timeout=min(timeout, 30000) / 1000.0)
+        except asyncio.TimeoutError:
+            pass
+
+        if download is not None:
+            final_path = target_path or (
+                os.path.join(download_dir, download.suggested_filename) if download_dir else download.suggested_filename
+            )
+            try:
+                await download.save_as(final_path)
+            except Exception:
+                temp_path = await download.path()
+                if temp_path and os.path.exists(temp_path):
+                    shutil.copy2(temp_path, final_path)
+            return f"downloaded {download.suggested_filename!r} from {desc} -> {final_path}"
+
+        # FALLBACK: Check download locations for recently completed download
+        downloads_folders = [
+            download_dir,
+            os.path.expanduser("~/Downloads"),
+            os.path.dirname(os.path.abspath(target_path)) if target_path else None,
+        ]
+        recent_cutoff = time.time() - 120
+        found_file = None
+        for folder in downloads_folders:
+            if not folder or not os.path.isdir(folder):
+                continue
+            candidates = glob.glob(os.path.join(folder, "*"))
+            for cand in candidates:
+                if cand.endswith(".crdownload") or cand.endswith(".tmp"):
+                    continue
+                try:
+                    if os.path.getmtime(cand) >= recent_cutoff:
+                        target_ext = os.path.splitext(target_path)[1].lower() if target_path else ""
+                        cand_ext = os.path.splitext(cand)[1].lower()
+                        if target_ext and cand_ext == target_ext:
+                            found_file = cand
+                            break
+                        elif not target_ext:
+                            found_file = cand
+                            break
+                except Exception:
+                    pass
+            if found_file:
+                break
+
+        if found_file:
+            final_path = target_path or found_file
+            if os.path.abspath(found_file) != os.path.abspath(final_path):
+                shutil.copy2(found_file, final_path)
+            return f"download detected ({os.path.basename(found_file)}) from {desc} -> {final_path}"
+
+        raise StepError(f"download from {desc} timed out after {timeout/1000}s")
+    finally:
+        try:
+            context.remove_listener("download", _on_dl)
+        except Exception:
+            pass
+        try:
+            page.remove_listener("download", _on_dl)
+        except Exception:
+            pass
+        try:
+            context.remove_listener("page", _on_new_page)
+        except Exception:
+            pass
+
+
+
+async def _async_step_upload(page, step):
+    """Async version: click a trigger element and handle the native file dialog."""
+    loc, desc = _async_resolve_locator(page, step)
+    file_path = step.get("file_path", "")
+    timeout = step.get("timeout", 30000)
+
+    if not file_path or not os.path.isfile(file_path):
+        raise StepError(f"upload file not found: {file_path!r}")
+
+    async with page.expect_file_chooser(timeout=timeout) as fc_info:
+        await loc.click(timeout=min(timeout, 15000))
+    file_chooser = await fc_info.value
+    await file_chooser.set_files(file_path)
+    return f"uploaded {os.path.basename(file_path)!r} via {desc}"
 
 
 ASYNC_STEP_HANDLERS = {
@@ -715,6 +949,7 @@ ASYNC_STEP_HANDLERS = {
     "dump": _async_step_dump,
     "pause": _async_step_pause,
     "download": _async_step_download,
+    "upload": _async_step_upload,
 }
 
 
@@ -729,7 +964,6 @@ async def run_step_async(
     page = state["page"]
     action = step.get("action")
     label = step.get("label", action)
-    prefix = f"  [{agent_name}][{index}]"
     step["_agent_name"] = agent_name
     try:
         if step.get("opens_tab"):

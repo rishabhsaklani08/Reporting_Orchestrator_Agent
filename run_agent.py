@@ -24,7 +24,14 @@ import sys
 from runner import run_config
 from utils import popup, clean_input, get_user_dir
 
-LOGIN_URL = "https://wd2-impl-identity.workday.com/wday/authgwy/accenture_dpt3/upc/login"
+LOGIN_URL = os.environ.get(
+    "WD_TENANT_LOGIN_URL",
+    "https://wd2-impl-identity.workday.com/wday/authgwy/accenture_dpt3/upc/login",
+)
+CC_LOGIN_URL = os.environ.get(
+    "WD_CC_LOGIN_URL",
+    "https://wd2-impl-identity.workday.com/wday/authgwy/accenture_ptcc/upc/login?redirect=n",
+)
 
 
 # --- user input ---------------------------------------------------------------
@@ -131,11 +138,15 @@ def _customer_central_steps(industry: str, package_name: str) -> list[dict]:
         {"action": "wait", "seconds": 2},
 
         # --- PART 2: open the Create Configuration Extract task ---
+        {"action": "click", "selector": "[data-automation-id='globalSearchInput']", "timeout": 10000, "label": "focus search bar"},
+        {"action": "press", "selector": "[data-automation-id='globalSearchInput']", "key": "Control+A", "label": "select all in search bar"},
         {"action": "type", "selector": "[data-automation-id='globalSearchInput']", "text": "Create Configuration Extract", "label": "search task"},
         {"action": "press", "selector": "[data-automation-id='globalSearchInput']", "key": "Enter", "label": "submit search"},
-        {"action": "wait_for", "selector": "text=Create Configuration Extract", "state": "visible", "timeout": 30000, "label": "wait for results"},
+        {"action": "wait_for", "selector": "text='Tasks and Reports'", "state": "visible", "timeout": 30000, "label": "wait for Tasks and Reports tab"},
         {"action": "wait", "seconds": 2},
-        {"action": "click", "text": "Create Configuration Extract", "exact": True, "timeout": 20000, "label": "open the task"},
+        {"action": "click", "text": "Tasks and Reports", "exact": False, "timeout": 20000, "label": "click Tasks and Reports tab"},
+        {"action": "wait", "seconds": 3},
+        {"action": "click", "byRole": {"role": "link", "name": "Create Configuration Extract", "exact": True}, "timeout": 20000, "label": "open the task"},
         {"action": "wait_for", "selector": "[data-automation-id='textInputBox']", "state": "visible", "timeout": 30000, "label": "wait for form"},
         {"action": "wait", "seconds": 2},
 
@@ -178,6 +189,87 @@ def _customer_central_steps(industry: str, package_name: str) -> list[dict]:
         # clicking the '.dat' text triggers the file download, which we capture to disk.
         {"action": "download", "text": ".dat", "path": os.path.join(get_user_dir(), f"{package_name}.dat"), "timeout": 60000, "label": "download .dat extract"},
         {"action": "wait", "seconds": 2},
+
+        # --- PART 5: Migrate Configuration Extract (upload the .dat into the target tenant) ---
+
+        # 5a. Go back to Home
+        {"action": "click", "selector": "[data-automation-id='homeButtonIcon'], button[aria-label='Home']", "timeout": 15000, "label": "click Home icon"},
+        {"action": "wait_for", "selector": "[data-automation-id='globalSearchInput']", "state": "visible", "timeout": 30000, "label": "wait for home screen"},
+        {"action": "wait", "seconds": 2},
+
+        # 5b. Search and open "Migrate Configuration Extract"
+        {"action": "click", "selector": "[data-automation-id='globalSearchInput']", "timeout": 10000, "label": "focus search bar"},
+        {"action": "press", "selector": "[data-automation-id='globalSearchInput']", "key": "Control+A", "label": "select all in search bar"},
+        {"action": "type", "selector": "[data-automation-id='globalSearchInput']", "text": "Migrate Configuration Extract", "label": "search Migrate Configuration Extract"},
+        {"action": "press", "selector": "[data-automation-id='globalSearchInput']", "key": "Enter", "label": "submit search"},
+        {"action": "wait_for", "selector": "text='Tasks and Reports'", "state": "visible", "timeout": 30000, "label": "wait for Tasks and Reports tab"},
+        {"action": "wait", "seconds": 2},
+        {"action": "click", "text": "Tasks and Reports", "exact": False, "timeout": 20000, "label": "click Tasks and Reports tab"},
+        {"action": "wait", "seconds": 3},
+        {"action": "click", "byRole": {"role": "link", "name": "Migrate Configuration Extract", "exact": True}, "timeout": 20000, "label": "open Migrate Configuration Extract task"},
+        {"action": "wait", "seconds": 5, "label": "wait for Migrate Configuration Extract form"},
+
+        # 5c. Upload the .dat file using Playwright's file_chooser
+        {"action": "upload", "selector": "button:has-text('Select files')", "file_path": os.path.join(get_user_dir(), f"{package_name}.dat"), "timeout": 30000, "label": f"upload {package_name}.dat"},
+        {"action": "wait", "seconds": 3, "label": "wait for file upload to process"},
+
+        # 5d. Select Target Tenant -> dpt10
+        {"action": "click", "byLabel": "Target Tenant", "timeout": 15000, "label": "focus Target Tenant"},
+        {"action": "wait", "seconds": 1},
+        {"action": "type", "byLabel": "Target Tenant", "text": "dpt10", "sequential": True, "clear": True, "timeout": 15000, "label": "type 'dpt10' in Target Tenant"},
+        {"action": "wait", "seconds": 3},
+        {"action": "click", "selector": "[data-automation-id='promptOption']:has-text('dpt10')", "timeout": 15000, "label": "select dpt10"},
+        {"action": "wait", "seconds": 2},
+
+        # 5e. Click OK (first screen)
+        {"action": "click", "selector": "button[data-automation-id='wd-CommandButton_uic_okButton']", "timeout": 15000, "label": "click OK (submit migrate extract)"},
+        {"action": "wait", "seconds": 5},
+
+        # 5f. Click OK on the confirmation/next screen
+        {"action": "click", "selector": "button[data-automation-id='wd-CommandButton_uic_okButton']", "optional": True, "timeout": 15000, "label": "click OK (confirmation screen)"},
+        {"action": "wait", "seconds": 5},
+
+        # 5g. Refresh until "View Diff Report" button appears, then click it
+        {"action": "click", "selector": "button:has-text('Refresh')", "optional": True, "timeout": 15000, "label": "click Refresh (1st)"},
+        {"action": "wait", "seconds": 6},
+        {"action": "click", "selector": "button:has-text('Refresh')", "optional": True, "timeout": 10000, "label": "click Refresh (2nd)"},
+        {"action": "wait", "seconds": 6},
+        {"action": "click", "selector": "button:has-text('Refresh')", "optional": True, "timeout": 10000, "label": "click Refresh (3rd)"},
+        {"action": "wait", "seconds": 6},
+        {"action": "click", "selector": "button:has-text('Refresh')", "optional": True, "timeout": 10000, "label": "click Refresh (4th)"},
+        {"action": "wait_for", "text": "View Diff Report", "state": "visible", "timeout": 120000, "label": "wait for View Diff Report button"},
+        {"action": "wait", "seconds": 2},
+        {"action": "click", "selector": "button:has-text('View Diff Report')", "timeout": 15000, "label": "click View Diff Report"},
+        {"action": "wait", "seconds": 5, "label": "wait for diff report to load"},
+
+        # 5h. Click "Proceed with Migration" on the Pre-Migration Diff Report page
+        {"action": "click", "selector": "button:has-text('Proceed with Migration')", "timeout": 20000, "label": "click Proceed with Migration"},
+        {"action": "wait", "seconds": 3},
+
+        # 5i. Click "Start Migration" on the confirmation dialog
+        {"action": "click", "selector": "button:has-text('Start Migration')", "timeout": 15000, "label": "click Start Migration"},
+        {"action": "wait", "seconds": 5},
+
+        # 5j. Refresh until "View Post Migration Report" button appears
+        {"action": "click", "selector": "button:has-text('Refresh')", "optional": True, "timeout": 15000, "label": "click Refresh (migration 1st)"},
+        {"action": "wait", "seconds": 10},
+        {"action": "click", "selector": "button:has-text('Refresh')", "optional": True, "timeout": 10000, "label": "click Refresh (migration 2nd)"},
+        {"action": "wait", "seconds": 10},
+        {"action": "click", "selector": "button:has-text('Refresh')", "optional": True, "timeout": 10000, "label": "click Refresh (migration 3rd)"},
+        {"action": "wait", "seconds": 10},
+        {"action": "click", "selector": "button:has-text('Refresh')", "optional": True, "timeout": 10000, "label": "click Refresh (migration 4th)"},
+        {"action": "wait", "seconds": 10},
+        {"action": "click", "selector": "button:has-text('Refresh')", "optional": True, "timeout": 10000, "label": "click Refresh (migration 5th)"},
+        {"action": "wait_for", "text": "View Post Migration Report", "state": "visible", "timeout": 180000, "label": "wait for View Post Migration Report button"},
+        {"action": "wait", "seconds": 2},
+
+        # 5k. Click "View Post Migration Report"
+        {"action": "click", "selector": "button:has-text('View Post Migration Report')", "timeout": 15000, "label": "click View Post Migration Report"},
+        {"action": "wait", "seconds": 5, "label": "wait for post migration summary"},
+
+        # 5l. Click "Done" on the Post Migration Summary page
+        {"action": "click", "selector": "button:has-text('Done')", "timeout": 15000, "label": "click Done"},
+        {"action": "wait", "seconds": 3, "label": "migration workflow complete"},
     ]
 
 
@@ -194,11 +286,21 @@ def build_config(industry: str, reports: list[str]) -> dict:
         {"action": "wait", "seconds": 2},
 
         # --- search + open the Create Configuration Package task ---
+        # Workday's custom search bar requires explicit focus before fill() works.
+        {"action": "click", "selector": "[data-automation-id='globalSearchInput']", "timeout": 10000, "label": "focus search bar"},
+        {"action": "press", "selector": "[data-automation-id='globalSearchInput']", "key": "Control+A", "label": "select all in search bar"},
         {"action": "type", "selector": "[data-automation-id='globalSearchInput']", "text": "Create Configuration Package", "label": "search task"},
         {"action": "press", "selector": "[data-automation-id='globalSearchInput']", "key": "Enter", "label": "submit search"},
-        {"action": "wait_for", "selector": "text=Create Configuration Package", "state": "visible", "timeout": 30000, "label": "wait for results"},
+        # Wait for the search results page to load, then click the Tasks and Reports tab
+        # to ensure the task link is visible (not buried under Top Results).
+        {"action": "wait_for", "selector": "text='Tasks and Reports'", "state": "visible", "timeout": 30000, "label": "wait for Tasks and Reports tab"},
         {"action": "wait", "seconds": 2},
-        {"action": "click", "text": "Create Configuration Package", "exact": True, "timeout": 20000, "label": "open the task"},
+        {"action": "click", "text": "Tasks and Reports", "exact": False, "timeout": 20000, "label": "click Tasks and Reports tab"},
+        {"action": "wait", "seconds": 3},
+        # Click the task link — uses role='link' to match Workday's search result elements
+        # (which may be <a> or <div role='link'>), with exact name to avoid matching
+        # 'Create Security Configuration Package'.
+        {"action": "click", "byRole": {"role": "link", "name": "Create Configuration Package", "exact": True}, "timeout": 20000, "label": "open the task"},
 
         # --- name + implementation type ---
         {"action": "wait_for", "selector": "[data-automation-id='textInputBox']", "state": "visible", "timeout": 30000, "label": "wait for form"},
@@ -239,7 +341,7 @@ def build_config(industry: str, reports: list[str]) -> dict:
         {"action": "click", "selector": "button[data-automation-id='wd-CommandButton_uic_okButton']", "optional": True, "timeout": 8000, "label": "acknowledge migrate message if shown"},
         {"action": "wait", "seconds": 3},
         # Navigate directly to Customer Central instead of clicking the link
-        {"action": "navigate", "url": "https://wd2-impl-identity.workday.com/wday/authgwy/accenture_ptcc/upc/login?redirect=n", "wait_until": "domcontentloaded", "timeout": 90000, "label": "open Customer Central login"},
+        {"action": "navigate", "url": CC_LOGIN_URL, "wait_until": "domcontentloaded", "timeout": 90000, "label": "open Customer Central login"},
     ]
 
     # one Customer Central block: create the configuration extract and download it

@@ -22,7 +22,7 @@ load_dotenv(dotenv_path=_env_path)
 # ── LLM Configuration ──
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "")
-MODEL_NAME: str = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
+MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen/qwen3.8-27b")
 
 # ── Workday Configuration ──
 WORKDAY_RAAS_URL: str = os.getenv("WORKDAY_RAAS_URL", "")
@@ -30,7 +30,7 @@ WORKDAY_ISU_USERNAME: str = os.getenv("WORKDAY_ISU_USERNAME", "")
 WORKDAY_ISU_PASSWORD: str = os.getenv("WORKDAY_ISU_PASSWORD", "")
 
 # ── BM25 Configuration ──
-BM25_TOP_N: int = int(os.getenv("BM25_TOP_N", "30"))
+BM25_TOP_N: int = int(os.getenv("BM25_TOP_N", "15"))
 BM25_K1: float = 1.5
 BM25_B: float = 0.75
 

@@ -61,9 +61,9 @@ class LLMScorer:
             candidate_text += f"Report Name: {rpt.get('Report_Name', 'N/A')}\n"
             candidate_text += f"Report Type: {rpt.get('Report_Type', 'N/A')}\n"
             candidate_text += f"Description: {rpt.get('Brief_Description') or 'NOT AVAILABLE'}\n"
-            candidate_text += f"Data Source: {(rpt.get('DS_Description') or 'N/A')[:300]}\n"
-            candidate_text += f"Fields Displayed: {(rpt.get('Fields_Displayed_on_Report') or 'N/A')[:300]}\n"
-            candidate_text += f"Fields Referenced: {(rpt.get('Fields_Referenced_in_Report') or 'N/A')[:300]}\n"
+            candidate_text += f"Data Source: {(rpt.get('DS_Description') or 'N/A')[:200]}\n"
+            candidate_text += f"Fields Displayed: {(rpt.get('Fields_Displayed_on_Report') or 'N/A')[:200]}\n"
+            candidate_text += f"Fields Referenced: {(rpt.get('Fields_Referenced_in_Report') or 'N/A')[:200]}\n"
 
         user_msg = (
             f'User Query: "{query}"\n\n'
@@ -115,7 +115,7 @@ class LLMScorer:
             return self._fallback(candidates, top_k, reason="LLM not configured")
 
         # Start with ideal candidate count; auto-reduce on 413 errors.
-        max_llm_candidates = min(len(candidates), max(top_k * 2, 20), 50)
+        max_llm_candidates = min(len(candidates), max(top_k * 2, 10), 15)
         llm_candidates = candidates[:max_llm_candidates]
 
         max_attempts = 6          # total attempts (covers size reductions + rate-limit retries)
@@ -129,7 +129,7 @@ class LLMScorer:
                     model=self.model,
                     messages=messages,
                     temperature=0.0,
-                    max_tokens=4096,
+                    max_tokens=2048,
                 )
                 content = response.choices[0].message.content
                 parsed = self._extract_json(content)

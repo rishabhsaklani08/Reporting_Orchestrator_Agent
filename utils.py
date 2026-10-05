@@ -87,12 +87,18 @@ _ENV_TEMPLATE = """\
 # Default: Groq Cloud with LLaMA 3.3 70B. Get your key from https://console.groq.com/
 OPENAI_API_KEY=
 OPENAI_BASE_URL=https://api.groq.com/openai/v1
-MODEL_NAME=llama-3.3-70b-versatile
+MODEL_NAME=qwen/qwen3.8-27b
 
 # ── Workday Tenant Credentials (for catalog sync from Workday RaaS) ──
 WORKDAY_RAAS_URL=
 WORKDAY_ISU_USERNAME=
 WORKDAY_ISU_PASSWORD=
+
+# ── Workday Tenant URLs (change these to point to a different tenant) ──
+# Source tenant login page (DPT3 by default)
+WD_TENANT_LOGIN_URL=https://wd2-impl-identity.workday.com/wday/authgwy/accenture_dpt3/upc/login
+# Customer Central login page
+WD_CC_LOGIN_URL=https://wd2-impl-identity.workday.com/wday/authgwy/accenture_ptcc/upc/login?redirect=n
 
 # ── Workday Login Credentials (for Migration & Export agents) ──
 # These are prompted at runtime if left blank here.
